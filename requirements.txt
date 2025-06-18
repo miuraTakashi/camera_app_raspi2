@@ -1,0 +1,2 @@
+# No Python dependencies required
+# All dependencies are built into Python 3 standard library 
