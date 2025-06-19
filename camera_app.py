@@ -115,38 +115,60 @@ class RPiCameraHeadless:
         timestamp = self.get_timestamp()
         filename = os.path.join(self.photos_dir, f"{timestamp}.jpg")
         
+        # Always show debug info for photo attempts
+        print(f"\n📸 Taking photo...")
+        print(f"   Target file: {filename}")
+        print(f"   Photos dir exists: {os.path.exists(self.photos_dir)}")
+        print(f"   Photos dir writable: {os.access(self.photos_dir, os.W_OK)}")
+        print(f"   Current working dir: {os.getcwd()}")
+        
         try:
             # Temporarily stop preview
             was_active = self.preview_active
             if was_active:
                 self.stop_preview()
             
-            # Take photo with optimized settings for speed
+            # Start with SIMPLE command that matches your working test
+            # We'll use basic parameters first, then add complexity if needed
             cmd = [
-                'raspistill', '-o', filename, 
-                '-t', '100',  # Very short capture time (0.1 seconds)
-                '-q', '90',   # Slightly reduced quality for speed (90% vs 100%)
-                '-w', '1920', '-h', '1080', 
-                '--nopreview',
-                '--immediate'  # Take photo immediately without delay
+                'raspistill', 
+                '-o', filename,
+                '-t', '2000'  # 2 seconds like your test command
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            print(f"   Running command: {' '.join(cmd)}")
+            print(f"   Working directory: {os.getcwd()}")
+            
+            # Run with more verbose output
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            print(f"   Return code: {result.returncode}")
+            if result.stdout:
+                print(f"   Stdout: {result.stdout}")
+            if result.stderr:
+                print(f"   Stderr: {result.stderr}")
             
             if result.returncode == 0:
                 # Check if file was actually created
                 if os.path.exists(filename):
                     size = os.path.getsize(filename)
-                    if not self.quiet_mode:
-                        print(f"✓ Photo saved: {filename}")
-                        print(f"  File size: {size/1024:.1f} KB")
+                    print(f"✅ Photo saved: {filename}")
+                    print(f"   File size: {size/1024:.1f} KB")
+                    
+                    # Test different optimizations one by one
+                    print(f"   📁 Full path: {os.path.abspath(filename)}")
+                    
                 else:
-                    # Always show this error, even in quiet mode
-                    print(f"✗ ERROR: Command succeeded but file not found: {filename}")
-                    print(f"   Check directory permissions: {self.photos_dir}")
+                    print(f"❌ Command succeeded but file not found: {filename}")
+                    print(f"   Check if file was created elsewhere...")
+                    # Look for any jpg files created recently
+                    import glob
+                    recent_files = glob.glob("*.jpg") + glob.glob("/home/*/camera_app_raspi2/*.jpg")
+                    if recent_files:
+                        print(f"   Recent JPG files found: {recent_files}")
             else:
                 # Always show camera errors, even in quiet mode
-                print(f"✗ ERROR: Camera command failed - Return code: {result.returncode}")
+                print(f"❌ Camera command failed - Return code: {result.returncode}")
                 if result.stderr:
                     print(f"   Error details: {result.stderr.strip()}")
                 
@@ -154,13 +176,13 @@ class RPiCameraHeadless:
                 if result.returncode == 64:
                     print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
                     print("   This usually means the camera hardware cannot be detected.")
+                    print("   But since 'raspistill -o test.jpg' works, this might be a parameter issue.")
                     print("   Troubleshooting steps:")
-                    print("   1. Check camera cable connection (firmly seated)")
-                    print("   2. Enable camera: sudo raspi-config → Interface Options → Camera")
-                    print("   3. Reboot after enabling: sudo reboot")
-                    print("   4. Test basic camera: raspistill -o test.jpg -t 2000")
-                    print("   5. Check camera detection: vcgencmd get_camera")
-                    print("   6. Check for hardware issues (try different camera/cable)")
+                    print("   1. Try running the exact same command manually:")
+                    print(f"      cd {os.getcwd()}")
+                    print(f"      {' '.join(cmd)}")
+                    print("   2. Check if preview is interfering")
+                    print("   3. Check file permissions in target directory")
                 elif result.returncode == 1:
                     print("\n🔧 ERROR CODE 1 - General Camera Error")
                     print("   Try: sudo modprobe bcm2835-v4l2")
@@ -177,21 +199,22 @@ class RPiCameraHeadless:
                     print(f"   🔐 Check permissions: sudo chown -R $USER:$USER {self.photos_dir}")
                 elif "busy" in result.stderr.lower():
                     print("   📷 Camera busy - close other camera applications")
+                    print("   Try: sudo pkill -f raspistill")
                 elif "timeout" in result.stderr.lower():
                     print("   ⏱️ Camera timeout - check hardware connection")
             
             # Restart preview quickly
             if was_active:
-                time.sleep(0.1)
+                time.sleep(0.5)  # Give more time for camera to be ready
                 self.start_preview()
                 
         except subprocess.TimeoutExpired:
-            print("✗ ERROR: Photo capture timed out")
+            print("❌ Photo capture timed out")
         except FileNotFoundError:
-            print("✗ ERROR: raspistill command not found")
+            print("❌ raspistill command not found")
             print("   Install with: sudo apt-get install libraspberrypi-bin")
         except Exception as e:
-            print(f"✗ ERROR: Unexpected error taking photo: {e}")
+            print(f"❌ Unexpected error taking photo: {e}")
             import traceback
             traceback.print_exc()
     
