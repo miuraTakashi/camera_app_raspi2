@@ -103,11 +103,36 @@ class RPiCameraHeadless:
         """Stop camera preview"""
         if self.preview_process:
             try:
+                # First try gentle termination
                 self.preview_process.terminate()
-                self.preview_process.wait(timeout=2)
-            except:
-                self.preview_process.kill()
-            self.preview_process = None
+                try:
+                    self.preview_process.wait(timeout=2)
+                    print("   📷 Preview terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't stop
+                    print("   ⚡ Force killing preview process")
+                    self.preview_process.kill()
+                    self.preview_process.wait(timeout=1)
+            except Exception as e:
+                print(f"   ⚠️ Error stopping preview: {e}")
+                # Force kill any remaining processes
+                try:
+                    subprocess.run(['sudo', 'pkill', '-f', 'raspistill'], timeout=5)
+                except:
+                    pass
+            finally:
+                self.preview_process = None
+        
+        # Double-check no raspistill processes are running
+        try:
+            result = subprocess.run(['pgrep', '-f', 'raspistill'], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                print(f"   ⚠️ Found lingering raspistill processes: {result.stdout.strip()}")
+                print("   🔧 Cleaning up...")
+                subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspistill'], timeout=5)
+        except:
+            pass
+            
         self.preview_active = False
     
     def take_photo(self):
@@ -473,10 +498,24 @@ class RPiCameraHeadless:
             self.stop_video_recording()
         self.stop_preview()
         
+        # Aggressively kill any remaining camera processes
+        print("🔧 Ensuring all camera processes are stopped...")
+        camera_commands = ['raspistill', 'raspivid']
+        for cmd in camera_commands:
+            try:
+                # Check if any processes are running
+                result = subprocess.run(['pgrep', '-f', cmd], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout:
+                    pids = result.stdout.strip().split('\n')
+                    print(f"   Killing {cmd} processes: {pids}")
+                    subprocess.run(['sudo', 'pkill', '-9', '-f', cmd], timeout=5)
+            except Exception as e:
+                print(f"   Warning: Could not clean up {cmd} processes: {e}")
+        
         # Restore terminal settings
         self.restore_terminal()
         
-        print("✓ Cleanup complete")
+        print("✅ Cleanup complete")
         print("\n🐚 Dropping to shell...")
         print("Camera app has exited. You now have shell access.")
         print("Type 'sudo systemctl restart camera-app-foreground.service' to restart the camera app")
@@ -500,6 +539,31 @@ def main():
                 print("Some camera functions may not work properly")
     except:
         pass
+    
+    # Check for existing camera processes and clean them up
+    print("🔍 Checking for existing camera processes...")
+    camera_commands = ['raspistill', 'raspivid']
+    processes_killed = False
+    
+    for cmd in camera_commands:
+        try:
+            result = subprocess.run(['pgrep', '-f', cmd], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                pids = result.stdout.strip().split('\n')
+                print(f"⚠️ Found existing {cmd} processes: {pids}")
+                print(f"🔧 Cleaning up {cmd} processes...")
+                subprocess.run(['sudo', 'pkill', '-9', '-f', cmd], timeout=5)
+                processes_killed = True
+        except Exception as e:
+            print(f"Warning: Could not check for {cmd} processes: {e}")
+    
+    if processes_killed:
+        print("✅ Cleaned up existing camera processes")
+        print("⏱️ Waiting 2 seconds for camera to be ready...")
+        import time
+        time.sleep(2)
+    else:
+        print("✅ No existing camera processes found")
     
     # Check if camera tools are available
     try:
