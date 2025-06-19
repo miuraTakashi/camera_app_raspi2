@@ -246,77 +246,148 @@ class RPiCameraHeadless:
     def start_video_recording(self):
         """Start video recording using raspivid"""
         if self.recording:
-            if not self.quiet_mode:
-                print("⚠ Already recording!")
+            print("⚠️ Already recording!")
             return
         
         timestamp = self.get_timestamp()
         filename = os.path.join(self.videos_dir, f"{timestamp}.h264")
         
+        # Always show debug info for video recording
+        print(f"\n🎥 Starting video recording...")
+        print(f"   Target file: {filename}")
+        print(f"   Videos dir exists: {os.path.exists(self.videos_dir)}")
+        print(f"   Videos dir writable: {os.access(self.videos_dir, os.W_OK)}")
+        
+        # Check for existing raspivid processes
+        try:
+            result = subprocess.run(['pgrep', '-f', 'raspivid'], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                print(f"⚠️ Found existing raspivid processes: {result.stdout.strip()}")
+                print("🔧 Cleaning up existing video processes...")
+                subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspivid'], timeout=5)
+                time.sleep(1)  # Give time for cleanup
+        except:
+            pass
+        
         try:
             # Stop preview first (raspivid will handle its own preview)
             self.stop_preview()
             
-            # Start recording with fullscreen preview (no red dot)
-            self.video_process = subprocess.Popen([
-                'raspivid', '-o', filename, '-t', '0',  # -t 0 for continuous recording
-                '-w', '1920', '-h', '1080', '-fps', '30',
+            # Start with simpler command first, then add complexity if needed
+            cmd = [
+                'raspivid', 
+                '-o', filename, 
+                '-t', '0',  # Continuous recording
                 '-f'  # Fullscreen preview
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ]
             
-            self.recording = True
+            print(f"   Running command: {' '.join(cmd)}")
+            
+            # Start recording process
+            self.video_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Give it a moment to start
+            time.sleep(0.5)
+            
+            # Check if process is still running (didn't immediately fail)
+            if self.video_process.poll() is None:
+                print("✅ Video recording started successfully")
+                self.recording = True
+            else:
+                # Process failed immediately
+                stdout, stderr = self.video_process.communicate()
+                print(f"❌ Video recording failed to start")
+                print(f"   Return code: {self.video_process.returncode}")
+                if stdout:
+                    print(f"   Stdout: {stdout.decode()}")
+                if stderr:
+                    print(f"   Stderr: {stderr.decode()}")
+                
+                # Handle specific error codes
+                if self.video_process.returncode == 64:
+                    print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
+                    print("   Camera busy or hardware issue")
+                    print("   Try: sudo pkill -f raspistill && sudo pkill -f raspivid")
+                
+                self.video_process = None
+                self.recording = False
             
         except Exception as e:
-            if not self.quiet_mode:
-                print(f"✗ Error starting video recording: {e}")
+            print(f"❌ Error starting video recording: {e}")
+            self.video_process = None
+            self.recording = False
     
     def stop_video_recording(self):
         """Stop video recording"""
         if not self.recording or not self.video_process:
-            if not self.quiet_mode:
-                print("⚠ Not currently recording!")
+            print("⚠️ Not currently recording!")
             return
         
+        print("\n🛑 Stopping video recording...")
+        
         try:
-            # Send SIGINT to stop recording gracefully
+            # First try gentle termination (SIGTERM)
+            print("   📤 Sending termination signal...")
             self.video_process.terminate()
-            self.video_process.wait(timeout=5)
             
-            # Try to find the video file that was just created
-            if not self.quiet_mode:
+            try:
+                self.video_process.wait(timeout=5)
+                print("   ✅ Video process terminated gracefully")
+            except subprocess.TimeoutExpired:
+                # Force kill if it doesn't stop (SIGKILL)
+                print("   ⚡ Force killing video process...")
+                self.video_process.kill()
                 try:
-                    import glob
-                    videos = glob.glob(f"{self.videos_dir}/*.h264")
-                    if videos:
-                        latest_video = max(videos, key=os.path.getctime)
+                    self.video_process.wait(timeout=2)
+                    print("   ✅ Video process killed")
+                except subprocess.TimeoutExpired:
+                    print("   ⚠️ Video process may still be running")
+            
+            # Check for video file and report size
+            try:
+                import glob
+                videos = glob.glob(f"{self.videos_dir}/*.h264")
+                if videos:
+                    latest_video = max(videos, key=os.path.getctime)
+                    if os.path.exists(latest_video):
                         size = os.path.getsize(latest_video)
-                        print(f"✓ Video saved: {latest_video}")
-                        print(f"  File size: {size/1024/1024:.1f} MB")
-                except:
-                    print("✓ Video recording stopped")
+                        print(f"✅ Video saved: {latest_video}")
+                        print(f"   File size: {size/1024/1024:.1f} MB")
+                    else:
+                        print("⚠️ Video file not found")
+                else:
+                    print("⚠️ No video files found in directory")
+            except Exception as e:
+                print(f"   ⚠️ Could not check video file: {e}")
+            
+            # Clean up any remaining raspivid processes
+            try:
+                result = subprocess.run(['pgrep', '-f', 'raspivid'], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout:
+                    pids = result.stdout.strip().split('\n')
+                    print(f"   🔧 Cleaning up remaining raspivid processes: {pids}")
+                    subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspivid'], timeout=5)
+            except:
+                pass
             
             self.video_process = None
             self.recording = False
             
-            # Restart preview without recording indicator
-            time.sleep(0.5)
+            # Restart preview after a brief pause
+            print("   🔄 Restarting preview...")
+            time.sleep(1)  # Give camera time to be available
             self.start_preview()
             
-        except subprocess.TimeoutExpired:
-            # Force kill if it doesn't stop gracefully
-            self.video_process.kill()
-            self.video_process = None
-            self.recording = False
-            if not self.quiet_mode:
-                print("✓ Video recording force stopped")
-            # Still restart preview
-            time.sleep(0.5)
-            self.start_preview()
         except Exception as e:
-            if not self.quiet_mode:
-                print(f"✗ Error stopping video: {e}")
-            # Set recording to false anyway
+            print(f"❌ Error stopping video recording: {e}")
+            # Force cleanup anyway
+            self.video_process = None
             self.recording = False
+            # Try to kill any raspivid processes
+            try:
+                subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspivid'], timeout=5)
+            except:
+                pass
     
     def show_status(self):
         """Show current status"""
