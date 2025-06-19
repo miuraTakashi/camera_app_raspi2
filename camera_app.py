@@ -11,50 +11,88 @@ Works without GUI - uses terminal for controls
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
 import sys
 import select
 import termios
 import tty
+import shutil
+import glob
+import builtins
+
+class TerminalOutputManager:
+    """Manages terminal output to handle raw mode properly"""
+    def __init__(self, camera_app):
+        self.camera_app = camera_app
+        self.original_print = builtins.print
+        
+    def managed_print(self, *args, **kwargs):
+        """Print function that handles terminal raw mode"""
+        if hasattr(self.camera_app, 'quiet_mode') and self.camera_app.quiet_mode:
+            # Check if this is a forced output or error
+            force = kwargs.pop('force', False)
+            if not force and not any('✗' in str(arg) or '❌' in str(arg) or '⚠' in str(arg) for arg in args):
+                return
+                
+        if hasattr(self.camera_app, 'old_settings') and self.camera_app.old_settings:
+            try:
+                # Temporarily restore normal terminal
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.camera_app.old_settings)
+                self.original_print(*args, **kwargs, flush=True)
+                # Restore raw mode
+                tty.setraw(sys.stdin.fileno())
+            except:
+                # Fallback to original print
+                self.original_print(*args, **kwargs, flush=True)
+        else:
+            self.original_print(*args, **kwargs, flush=True)
 
 class RPiCameraHeadless:
     def __init__(self):
+        """Initialize camera app"""
         print("Raspberry Pi Camera App - Headless Version")
         print("=" * 50)
         
-        # Status variables
-        self.recording = False
-        self.preview_active = False
-        self.preview_process = None
-        self.video_process = None
-        self.running = True
+        # Store original print function for restoration
+        self.original_print = print
         
-        # Terminal settings for single keypress input
+        # Replace built-in print with our safe version after initialization
+        self._setup_safe_printing = False
+        
+        # Set up directories
+        home_dir = os.path.expanduser("~")
+        base_dir = os.path.join(home_dir, "camera_app_raspi2")
+        
+        self.photos_dir = os.path.join(base_dir, "photos")
+        self.videos_dir = os.path.join(base_dir, "videos")
+        
+        # Store original terminal settings
         self.old_settings = None
         
-        # Quiet mode - suppress output during preview
-        self.quiet_mode = True
+        # State variables
+        self.preview_process = None
+        self.video_process = None
+        self.recording = False
+        self.preview_active = False
+        self.running = True
+        self.quiet_mode = False
         
-        # Ensure we're in the correct working directory
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        os.chdir(script_dir)
-        print(f"Working directory: {os.getcwd()}")
-        
-        # Create directories for photos and videos with full paths
-        self.photos_dir = os.path.join(script_dir, "photos")
-        self.videos_dir = os.path.join(script_dir, "videos")
-        
+        # Create directories
         try:
             os.makedirs(self.photos_dir, exist_ok=True)
             os.makedirs(self.videos_dir, exist_ok=True)
+            print(f"Working directory: {os.getcwd()}")
             
-            # Set proper permissions for directories
-            os.chmod(self.photos_dir, 0o755)
-            os.chmod(self.videos_dir, 0o755)
+            # Test absolute paths
+            abs_photos = os.path.abspath(self.photos_dir)
+            abs_videos = os.path.abspath(self.videos_dir)
             
             print(f"Photos directory: {self.photos_dir}")
             print(f"Videos directory: {self.videos_dir}")
+            
+            # Check disk space
+            self.check_disk_space()
             
         except PermissionError as e:
             print(f"✗ ERROR: Permission denied creating directories: {e}")
@@ -66,9 +104,109 @@ class RPiCameraHeadless:
             print(f"   Attempted to create: {self.videos_dir}")
             sys.exit(1)
         
+    def safe_print(self, *args, **kwargs):
+        """Safe print function that handles terminal mode properly"""
+        message = ' '.join(str(arg) for arg in args)
+        
+        # Check if we should output (respect quiet mode unless forced)
+        force_output = kwargs.pop('force', False)
+        if self.quiet_mode and not force_output:
+            return
+            
+        # Handle terminal formatting
+        if hasattr(self, 'old_settings') and self.old_settings:
+            try:
+                # Temporarily restore normal terminal mode
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+                self.original_print(message, **kwargs, flush=True)
+                # Restore raw mode
+                tty.setraw(sys.stdin.fileno())
+            except:
+                # Fallback - print with manual formatting
+                self.original_print(message.replace('\n', '\r\n'), **kwargs, flush=True)
+        else:
+            self.original_print(message, **kwargs, flush=True)
+    
     def get_timestamp(self):
-        """Generate timestamp in format: YYYYMMDD_HHMMSS"""
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
+        """Generate timestamp in format: YYYYMMDD_HHMMSS using JST (Japan Standard Time)"""
+        # JST is UTC+9
+        jst = timezone(timedelta(hours=9))
+        return datetime.now(jst).strftime("%Y%m%d_%H%M%S")
+    
+    def check_disk_space(self):
+        """Check available disk space and warn if low"""
+        try:
+            # Get disk usage for current directory
+            total, used, free = shutil.disk_usage(os.getcwd())
+            
+            # Convert to MB
+            free_mb = free // (1024 * 1024)
+            total_mb = total // (1024 * 1024)
+            used_percent = (used / total) * 100
+            
+            self.safe_print(f"💾 Disk space: {free_mb}MB free / {total_mb}MB total ({used_percent:.1f}% used)")
+            
+            # Warning thresholds
+            if free_mb < 100:  # Less than 100MB
+                self.safe_print("🚨 CRITICAL: Very low disk space!")
+                self.safe_print("   Consider cleaning up old files")
+                return False
+            elif free_mb < 500:  # Less than 500MB
+                self.safe_print("⚠️ WARNING: Low disk space")
+                self.safe_print("   You may want to clean up soon")
+                return True
+            else:
+                self.safe_print("✅ Disk space OK")
+                return True
+                
+        except Exception as e:
+            self.safe_print(f"⚠️ Could not check disk space: {e}")
+            return True
+
+    def cleanup_old_files(self, max_photos=100, max_videos=20):
+        """Clean up old files to free space"""
+        self.safe_print("🧹 Cleaning up old files...")
+        
+        try:
+            # Clean up old photos
+            photos = glob.glob(os.path.join(self.photos_dir, "*.jpg"))
+            if len(photos) > max_photos:
+                # Sort by modification time (oldest first)
+                photos.sort(key=os.path.getmtime)
+                to_remove = photos[:-max_photos]  # Keep only the newest max_photos
+                
+                for photo in to_remove:
+                    try:
+                        os.remove(photo)
+                        self.safe_print(f"   🗑️ Removed old photo: {os.path.basename(photo)}")
+                    except:
+                        pass
+                        
+                self.safe_print(f"   📸 Kept {max_photos} newest photos, removed {len(to_remove)} old ones")
+            
+            # Clean up old videos
+            videos = glob.glob(os.path.join(self.videos_dir, "*.h264"))
+            if len(videos) > max_videos:
+                # Sort by modification time (oldest first)
+                videos.sort(key=os.path.getmtime)
+                to_remove = videos[:-max_videos]  # Keep only the newest max_videos
+                
+                for video in to_remove:
+                    try:
+                        # Videos are large, show size before removing
+                        size = os.path.getsize(video) // (1024 * 1024)  # MB
+                        os.remove(video)
+                        self.safe_print(f"   🗑️ Removed old video: {os.path.basename(video)} ({size}MB)")
+                    except:
+                        pass
+                        
+                self.safe_print(f"   🎥 Kept {max_videos} newest videos, removed {len(to_remove)} old ones")
+            
+            return True
+            
+        except Exception as e:
+            self.safe_print(f"⚠️ Error during cleanup: {e}")
+            return False
     
     def start_preview(self):
         """Start camera preview using raspistill"""
@@ -96,8 +234,8 @@ class RPiCameraHeadless:
             
         except Exception as e:
             if not self.quiet_mode:
-                print(f"✗ Error starting preview: {e}")
-                print("  Preview will be disabled, but photo/video capture will still work")
+                self.safe_print(f"✗ Error starting preview: {e}")
+                self.safe_print("  Preview will be disabled, but photo/video capture will still work")
     
     def stop_preview(self):
         """Stop camera preview"""
@@ -107,14 +245,14 @@ class RPiCameraHeadless:
                 self.preview_process.terminate()
                 try:
                     self.preview_process.wait(timeout=2)
-                    print("   📷 Preview terminated gracefully")
+                    self.safe_print("   📷 Preview terminated gracefully")
                 except subprocess.TimeoutExpired:
                     # Force kill if it doesn't stop
-                    print("   ⚡ Force killing preview process")
+                    self.safe_print("   ⚡ Force killing preview process")
                     self.preview_process.kill()
                     self.preview_process.wait(timeout=1)
             except Exception as e:
-                print(f"   ⚠️ Error stopping preview: {e}")
+                self.safe_print(f"   ⚠️ Error stopping preview: {e}")
                 # Force kill any remaining processes
                 try:
                     subprocess.run(['sudo', 'pkill', '-f', 'raspistill'], timeout=5)
@@ -127,8 +265,8 @@ class RPiCameraHeadless:
         try:
             result = subprocess.run(['pgrep', '-f', 'raspistill'], capture_output=True, text=True)
             if result.returncode == 0 and result.stdout:
-                print(f"   ⚠️ Found lingering raspistill processes: {result.stdout.strip()}")
-                print("   🔧 Cleaning up...")
+                self.safe_print(f"   ⚠️ Found lingering raspistill processes: {result.stdout.strip()}")
+                self.safe_print("   🔧 Cleaning up...")
                 subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspistill'], timeout=5)
         except:
             pass
@@ -141,11 +279,11 @@ class RPiCameraHeadless:
         filename = os.path.join(self.photos_dir, f"{timestamp}.jpg")
         
         # Always show debug info for photo attempts
-        print(f"\n📸 Taking photo...")
-        print(f"   Target file: {filename}")
-        print(f"   Photos dir exists: {os.path.exists(self.photos_dir)}")
-        print(f"   Photos dir writable: {os.access(self.photos_dir, os.W_OK)}")
-        print(f"   Current working dir: {os.getcwd()}")
+        self.print_formatted(f"\n📸 Taking photo...", force_output=True)
+        self.print_formatted(f"   Target file: {filename}", force_output=True)
+        self.print_formatted(f"   Photos dir exists: {os.path.exists(self.photos_dir)}", force_output=True)
+        self.print_formatted(f"   Photos dir writable: {os.access(self.photos_dir, os.W_OK)}", force_output=True)
+        self.print_formatted(f"   Current working dir: {os.getcwd()}", force_output=True)
         
         try:
             # Temporarily stop preview
@@ -161,72 +299,71 @@ class RPiCameraHeadless:
                 '-t', '2000'  # 2 seconds like your test command
             ]
             
-            print(f"   Running command: {' '.join(cmd)}")
-            print(f"   Working directory: {os.getcwd()}")
+            self.print_formatted(f"   Running command: {' '.join(cmd)}", force_output=True)
+            self.print_formatted(f"   Working directory: {os.getcwd()}", force_output=True)
             
             # Run with more verbose output
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             
-            print(f"   Return code: {result.returncode}")
+            self.print_formatted(f"   Return code: {result.returncode}", force_output=True)
             if result.stdout:
-                print(f"   Stdout: {result.stdout}")
+                self.print_formatted(f"   Stdout: {result.stdout}", force_output=True)
             if result.stderr:
-                print(f"   Stderr: {result.stderr}")
+                self.print_formatted(f"   Stderr: {result.stderr}", force_output=True)
             
             if result.returncode == 0:
                 # Check if file was actually created
                 if os.path.exists(filename):
                     size = os.path.getsize(filename)
-                    print(f"✅ Photo saved: {filename}")
-                    print(f"   File size: {size/1024:.1f} KB")
+                    self.print_formatted(f"✅ Photo saved: {filename}", force_output=True)
+                    self.print_formatted(f"   File size: {size/1024:.1f} KB", force_output=True)
                     
                     # Test different optimizations one by one
-                    print(f"   📁 Full path: {os.path.abspath(filename)}")
+                    self.print_formatted(f"   📁 Full path: {os.path.abspath(filename)}", force_output=True)
                     
                 else:
-                    print(f"❌ Command succeeded but file not found: {filename}")
-                    print(f"   Check if file was created elsewhere...")
+                    self.print_formatted(f"❌ Command succeeded but file not found: {filename}", force_output=True)
+                    self.print_formatted(f"   Check if file was created elsewhere...", force_output=True)
                     # Look for any jpg files created recently
-                    import glob
                     recent_files = glob.glob("*.jpg") + glob.glob("/home/*/camera_app_raspi2/*.jpg")
                     if recent_files:
-                        print(f"   Recent JPG files found: {recent_files}")
+                        self.print_formatted(f"   Recent JPG files found: {recent_files}", force_output=True)
             else:
                 # Always show camera errors, even in quiet mode
-                print(f"❌ Camera command failed - Return code: {result.returncode}")
+                self.print_formatted(f"❌ Camera command failed - Return code: {result.returncode}", force_output=True)
                 if result.stderr:
-                    print(f"   Error details: {result.stderr.strip()}")
+                    self.print_formatted(f"   Error details: {result.stderr.strip()}", force_output=True)
                 
                 # Specific error code handling
                 if result.returncode == 64:
-                    print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
-                    print("   This usually means the camera hardware cannot be detected.")
-                    print("   But since 'raspistill -o test.jpg' works, this might be a parameter issue.")
-                    print("   Troubleshooting steps:")
-                    print("   1. Try running the exact same command manually:")
-                    print(f"      cd {os.getcwd()}")
-                    print(f"      {' '.join(cmd)}")
-                    print("   2. Check if preview is interfering")
-                    print("   3. Check file permissions in target directory")
+                    self.print_formatted("\n🔧 ERROR CODE 64 - Camera Initialization Failed", force_output=True)
+                    self.print_formatted("   This usually means the camera hardware cannot be detected.", force_output=True)
+                    self.print_formatted("   But since 'raspistill -o test.jpg' works, this might be a parameter issue.", force_output=True)
+                    self.print_formatted("   Troubleshooting steps:", force_output=True)
+                    self.print_formatted("   1. Try running the exact same command manually:", force_output=True)
+                    self.print_formatted(f"      cd {os.getcwd()}", force_output=True)
+                    self.print_formatted(f"      {' '.join(cmd)}", force_output=True)
+                    self.print_formatted("   2. Check if preview is interfering", force_output=True)
+                    self.print_formatted("   3. Check file permissions in target directory", force_output=True)
                 elif result.returncode == 1:
-                    print("\n🔧 ERROR CODE 1 - General Camera Error")
-                    print("   Try: sudo modprobe bcm2835-v4l2")
+                    self.print_formatted("\n🔧 ERROR CODE 1 - General Camera Error", force_output=True)
+                    self.print_formatted("   Try: sudo modprobe bcm2835-v4l2", force_output=True)
                 elif result.returncode == 70:
-                    print("\n🔧 ERROR CODE 70 - Software Error")
-                    print("   Camera software issue. Try: sudo apt-get update && sudo apt-get install --reinstall libraspberrypi-bin")
+                    self.print_formatted("\n🔧 ERROR CODE 70 - Software Error", force_output=True)
+                    self.print_formatted("   Camera software issue. Try: sudo apt-get update && sudo apt-get install --reinstall libraspberrypi-bin", force_output=True)
                 elif result.returncode == 130:
-                    print("\n🔧 ERROR CODE 130 - Interrupted")
-                    print("   Camera command was interrupted")
+                    self.print_formatted("\n🔧 ERROR CODE 130 - Interrupted", force_output=True)
+                    self.print_formatted("   Camera command was interrupted", force_output=True)
                 
                 if "not found" in result.stderr.lower():
-                    print("   📦 Install camera tools: sudo apt-get install libraspberrypi-bin")
+                    self.print_formatted("   📦 Install camera tools: sudo apt-get install libraspberrypi-bin", force_output=True)
                 elif "permission" in result.stderr.lower():
-                    print(f"   🔐 Check permissions: sudo chown -R $USER:$USER {self.photos_dir}")
+                    self.print_formatted(f"   🔐 Check permissions: sudo chown -R $USER:$USER {self.photos_dir}", force_output=True)
                 elif "busy" in result.stderr.lower():
-                    print("   📷 Camera busy - close other camera applications")
-                    print("   Try: sudo pkill -f raspistill")
+                    self.print_formatted("   📷 Camera busy - close other camera applications", force_output=True)
+                    self.print_formatted("   Try: sudo pkill -f raspistill", force_output=True)
                 elif "timeout" in result.stderr.lower():
-                    print("   ⏱️ Camera timeout - check hardware connection")
+                    self.print_formatted("   ⏱️ Camera timeout - check hardware connection", force_output=True)
             
             # Restart preview quickly
             if was_active:
@@ -234,36 +371,36 @@ class RPiCameraHeadless:
                 self.start_preview()
                 
         except subprocess.TimeoutExpired:
-            print("❌ Photo capture timed out")
+            self.print_formatted("❌ Photo capture timed out", force_output=True)
         except FileNotFoundError:
-            print("❌ raspistill command not found")
-            print("   Install with: sudo apt-get install libraspberrypi-bin")
+            self.print_formatted("❌ raspistill command not found", force_output=True)
+            self.print_formatted("   Install with: sudo apt-get install libraspberrypi-bin", force_output=True)
         except Exception as e:
-            print(f"❌ Unexpected error taking photo: {e}")
+            self.print_formatted(f"❌ Unexpected error taking photo: {e}", force_output=True)
             import traceback
             traceback.print_exc()
     
     def start_video_recording(self):
         """Start video recording using raspivid"""
         if self.recording:
-            print("⚠️ Already recording!")
+            self.safe_print("⚠️ Already recording!")
             return
         
         timestamp = self.get_timestamp()
         filename = os.path.join(self.videos_dir, f"{timestamp}.h264")
         
         # Always show debug info for video recording
-        print(f"\n🎥 Starting video recording...")
-        print(f"   Target file: {filename}")
-        print(f"   Videos dir exists: {os.path.exists(self.videos_dir)}")
-        print(f"   Videos dir writable: {os.access(self.videos_dir, os.W_OK)}")
+        self.safe_print(f"\n🎥 Starting video recording...")
+        self.safe_print(f"   Target file: {filename}")
+        self.safe_print(f"   Videos dir exists: {os.path.exists(self.videos_dir)}")
+        self.safe_print(f"   Videos dir writable: {os.access(self.videos_dir, os.W_OK)}")
         
         # Check for existing raspivid processes
         try:
             result = subprocess.run(['pgrep', '-f', 'raspivid'], capture_output=True, text=True)
             if result.returncode == 0 and result.stdout:
-                print(f"⚠️ Found existing raspivid processes: {result.stdout.strip()}")
-                print("🔧 Cleaning up existing video processes...")
+                self.safe_print(f"⚠️ Found existing raspivid processes: {result.stdout.strip()}")
+                self.safe_print("🔧 Cleaning up existing video processes...")
                 subprocess.run(['sudo', 'pkill', '-9', '-f', 'raspivid'], timeout=5)
                 time.sleep(1)  # Give time for cleanup
         except:
@@ -281,7 +418,7 @@ class RPiCameraHeadless:
                 '-f'  # Fullscreen preview
             ]
             
-            print(f"   Running command: {' '.join(cmd)}")
+            self.safe_print(f"   Running command: {' '.join(cmd)}")
             
             # Start recording process
             self.video_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -291,72 +428,71 @@ class RPiCameraHeadless:
             
             # Check if process is still running (didn't immediately fail)
             if self.video_process.poll() is None:
-                print("✅ Video recording started successfully")
+                self.safe_print("✅ Video recording started successfully")
                 self.recording = True
             else:
                 # Process failed immediately
                 stdout, stderr = self.video_process.communicate()
-                print(f"❌ Video recording failed to start")
-                print(f"   Return code: {self.video_process.returncode}")
+                self.safe_print(f"❌ Video recording failed to start")
+                self.safe_print(f"   Return code: {self.video_process.returncode}")
                 if stdout:
-                    print(f"   Stdout: {stdout.decode()}")
+                    self.safe_print(f"   Stdout: {stdout.decode()}")
                 if stderr:
-                    print(f"   Stderr: {stderr.decode()}")
+                    self.safe_print(f"   Stderr: {stderr.decode()}")
                 
                 # Handle specific error codes
                 if self.video_process.returncode == 64:
-                    print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
-                    print("   Camera busy or hardware issue")
-                    print("   Try: sudo pkill -f raspistill && sudo pkill -f raspivid")
+                    self.safe_print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
+                    self.safe_print("   Camera busy or hardware issue")
+                    self.safe_print("   Try: sudo pkill -f raspistill && sudo pkill -f raspivid")
                 
                 self.video_process = None
                 self.recording = False
             
         except Exception as e:
-            print(f"❌ Error starting video recording: {e}")
+            self.safe_print(f"❌ Error starting video recording: {e}")
             self.video_process = None
             self.recording = False
     
     def stop_video_recording(self):
         """Stop video recording"""
         if not self.recording or not self.video_process:
-            print("⚠️ Not currently recording!")
+            self.safe_print("⚠️ Not currently recording!")
             return
         
-        print("\n🛑 Stopping video recording...")
+        self.safe_print("\n🛑 Stopping video recording...")
         
         try:
             # First try gentle termination (SIGTERM)
-            print("   📤 Sending termination signal...")
+            self.safe_print("   📤 Sending termination signal...")
             self.video_process.terminate()
             
             try:
                 self.video_process.wait(timeout=5)
-                print("   ✅ Video process terminated gracefully")
+                self.safe_print("   ✅ Video process terminated gracefully")
             except subprocess.TimeoutExpired:
                 # Force kill if it doesn't stop (SIGKILL)
-                print("   ⚡ Force killing video process...")
+                self.safe_print("   ⚡ Force killing video process...")
                 self.video_process.kill()
                 try:
                     self.video_process.wait(timeout=2)
-                    print("   ✅ Video process killed")
+                    self.safe_print("   ✅ Video process killed")
                 except subprocess.TimeoutExpired:
-                    print("   ⚠️ Video process may still be running")
+                    self.safe_print("   ⚠️ Video process may still be running")
             
             # Check for video file and report size
             try:
-                import glob
                 videos = glob.glob(f"{self.videos_dir}/*.h264")
                 if videos:
                     latest_video = max(videos, key=os.path.getctime)
                     if os.path.exists(latest_video):
                         size = os.path.getsize(latest_video)
-                        print(f"✅ Video saved: {latest_video}")
-                        print(f"   File size: {size/1024/1024:.1f} MB")
+                        self.safe_print(f"✅ Video saved: {latest_video}")
+                        self.safe_print(f"   File size: {size/1024/1024:.1f} MB")
                     else:
-                        print("⚠️ Video file not found")
+                        self.safe_print("⚠️ Video file not found")
                 else:
-                    print("⚠️ No video files found in directory")
+                    self.safe_print("⚠️ No video files found in directory")
             except Exception as e:
                 print(f"   ⚠️ Could not check video file: {e}")
             
@@ -408,13 +544,50 @@ class RPiCameraHeadless:
         print("  q/ESC      - Quit")
         print("=" * 50)
     
+    def print_formatted(self, message, force_output=False):
+        """Print message with proper terminal formatting in raw mode"""
+        if self.quiet_mode and not force_output:
+            return
+            
+        # Temporarily restore terminal for clean output
+        if self.old_settings:
+            try:
+                # Save current raw settings
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+                print(message, flush=True)
+                # Restore raw mode immediately
+                tty.setraw(sys.stdin.fileno())
+            except:
+                # Fallback - just print with manual line endings
+                print(message.replace('\n', '\r\n') + '\r\n', end='', flush=True)
+        else:
+            print(message, flush=True)
+
+    def print_always(self, message):
+        """Print message that always shows, even in quiet mode, with proper formatting"""
+        # This function is for critical messages that must always appear
+        if self.old_settings:
+            try:
+                # Save current raw settings
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+                print(message, flush=True)
+                # Restore raw mode immediately
+                tty.setraw(sys.stdin.fileno())
+            except:
+                # Fallback - just print with manual line endings
+                print(message.replace('\n', '\r\n') + '\r\n', end='', flush=True)
+        else:
+            print(message, flush=True)
+
     def setup_terminal(self):
         """Set up terminal for single keypress input"""
         try:
             self.old_settings = termios.tcgetattr(sys.stdin)
             tty.setraw(sys.stdin.fileno())
+            # Enable safe print patching to fix oblique output display
+            self.monkey_patch_print()
         except:
-            print("⚠ Warning: Could not set up raw terminal input")
+            self.print_always("⚠ Warning: Could not set up raw terminal input")
             self.old_settings = None
     
     def restore_terminal(self):
@@ -428,9 +601,15 @@ class RPiCameraHeadless:
     def show_prompt(self):
         """Show the input prompt with proper cursor positioning"""
         if self.running and not self.quiet_mode:
-            # Move to new line, clear it, and show prompt
-            status = '📹REC' if self.recording else '👁PREV' if self.preview_active else 'READY'
-            print(f"\nPress key (current: {status}): ", end='', flush=True)
+            # Temporarily restore terminal for clean prompt
+            if self.old_settings:
+                try:
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+                    status = '📹REC' if self.recording else '👁PREV' if self.preview_active else 'READY'
+                    print(f"\nPress key (current: {status}): ", end='', flush=True)
+                    tty.setraw(sys.stdin.fileno())
+                except:
+                    pass
     
     def get_keypress(self):
         """Get a single keypress without Enter"""
@@ -462,7 +641,7 @@ class RPiCameraHeadless:
                 self.stop_preview()
                 # Switch to non-quiet mode when preview is off
                 self.quiet_mode = False
-                print("\n⏸ Preview stopped")
+                self.print_formatted("\n⏸ Preview stopped", force_output=True)
             else:
                 # Switch to quiet mode when preview is on
                 self.quiet_mode = True
@@ -477,18 +656,18 @@ class RPiCameraHeadless:
             
         elif key == 'h':
             self.quiet_mode = False
-            print("\n🐚 Opening shell...")
-            print("Type 'exit' to return to camera app")
+            self.print_formatted("\n🐚 Opening shell...", force_output=True)
+            self.print_formatted("Type 'exit' to return to camera app", force_output=True)
             self.open_shell()
             
         elif key == 'q' or key == 'esc':
             self.quiet_mode = False
-            print("\n👋 Quitting...")
+            self.print_formatted("\n👋 Quitting...", force_output=True)
             self.running = False
             
         else:
             if key and key.isprintable() and not self.quiet_mode:
-                print(f"\n❓ Unknown key: '{key}' - Press 's' for help")
+                self.print_formatted(f"\n❓ Unknown key: '{key}' - Press 's' for help", force_output=True)
             
         # Show prompt again
         self.show_prompt()
@@ -527,7 +706,7 @@ class RPiCameraHeadless:
     
     def run(self):
         """Main application loop"""
-        print("\nInitializing camera...")
+        self.print_formatted("\nInitializing camera...", force_output=True)
         self.start_preview()
         
         # Only show initial status, then go quiet
@@ -548,11 +727,11 @@ class RPiCameraHeadless:
                     
                 except KeyboardInterrupt:
                     # Handle Ctrl+C
-                    print("\n\n⚠ Interrupted by user")
+                    self.print_formatted("\n\n⚠ Interrupted by user", force_output=True)
                     break
                     
         except Exception as e:
-            print(f"\n✗ Error in main loop: {e}")
+            self.print_formatted(f"\n✗ Error in main loop: {e}", force_output=True)
         finally:
             # Always restore terminal
             self.restore_terminal()
@@ -562,7 +741,7 @@ class RPiCameraHeadless:
     
     def cleanup(self):
         """Clean up resources"""
-        print("\n🧹 Cleaning up...")
+        self.print_formatted("\n🧹 Cleaning up...", force_output=True)
         
         # Stop all camera processes
         if self.recording:
@@ -570,7 +749,7 @@ class RPiCameraHeadless:
         self.stop_preview()
         
         # Aggressively kill any remaining camera processes
-        print("🔧 Ensuring all camera processes are stopped...")
+        self.print_formatted("🔧 Ensuring all camera processes are stopped...", force_output=True)
         camera_commands = ['raspistill', 'raspivid']
         for cmd in camera_commands:
             try:
@@ -578,10 +757,10 @@ class RPiCameraHeadless:
                 result = subprocess.run(['pgrep', '-f', cmd], capture_output=True, text=True)
                 if result.returncode == 0 and result.stdout:
                     pids = result.stdout.strip().split('\n')
-                    print(f"   Killing {cmd} processes: {pids}")
+                    self.print_formatted(f"   Killing {cmd} processes: {pids}", force_output=True)
                     subprocess.run(['sudo', 'pkill', '-9', '-f', cmd], timeout=5)
             except Exception as e:
-                print(f"   Warning: Could not clean up {cmd} processes: {e}")
+                self.print_formatted(f"   Warning: Could not clean up {cmd} processes: {e}", force_output=True)
         
         # Restore terminal settings
         self.restore_terminal()
@@ -598,6 +777,38 @@ class RPiCameraHeadless:
         except:
             # If shell fails, at least restore terminal
             pass
+
+    def monkey_patch_print(self):
+        """Replace the global print function with our safe version"""
+        def safe_global_print(*args, **kwargs):
+            # Convert args to message string
+            sep = kwargs.get('sep', ' ')
+            message = sep.join(str(arg) for arg in args)
+            
+            # Check for critical messages that should always show
+            is_critical = any(marker in message for marker in ['✗', '❌', '⚠', '🚨', '🔧', 'ERROR', 'Warning'])
+            
+            if is_critical or not self.quiet_mode:
+                if self.old_settings:
+                    try:
+                        # Temporarily restore normal terminal
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+                        self.original_print(*args, **kwargs, flush=True)
+                        # Restore raw mode
+                        tty.setraw(sys.stdin.fileno())
+                    except:
+                        # Fallback
+                        self.original_print(*args, **kwargs, flush=True)
+                else:
+                    self.original_print(*args, **kwargs, flush=True)
+        
+        # Replace builtins.print with our safe version
+        builtins.print = safe_global_print
+
+    def restore_print(self):
+        """Restore the original print function"""
+        import builtins
+        builtins.print = self.original_print
 
 def main():
     """Main function"""
