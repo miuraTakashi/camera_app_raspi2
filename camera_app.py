@@ -45,18 +45,26 @@ class RPiCameraHeadless:
         self.photos_dir = os.path.join(script_dir, "photos")
         self.videos_dir = os.path.join(script_dir, "videos")
         
-        os.makedirs(self.photos_dir, exist_ok=True)
-        os.makedirs(self.videos_dir, exist_ok=True)
-        
-        # Set proper permissions for directories
-        os.chmod(self.photos_dir, 0o755)
-        os.chmod(self.videos_dir, 0o755)
-        
-        print(f"Photos directory: {self.photos_dir}")
-        print(f"Videos directory: {self.videos_dir}")
-        
-        if not self.quiet_mode:
-            print("Directories created: photos/, videos/")
+        try:
+            os.makedirs(self.photos_dir, exist_ok=True)
+            os.makedirs(self.videos_dir, exist_ok=True)
+            
+            # Set proper permissions for directories
+            os.chmod(self.photos_dir, 0o755)
+            os.chmod(self.videos_dir, 0o755)
+            
+            print(f"Photos directory: {self.photos_dir}")
+            print(f"Videos directory: {self.videos_dir}")
+            
+        except PermissionError as e:
+            print(f"✗ ERROR: Permission denied creating directories: {e}")
+            print(f"   Try running with sudo or check parent directory permissions")
+            sys.exit(1)
+        except Exception as e:
+            print(f"✗ ERROR: Failed to create directories: {e}")
+            print(f"   Attempted to create: {self.photos_dir}")
+            print(f"   Attempted to create: {self.videos_dir}")
+            sys.exit(1)
         
     def get_timestamp(self):
         """Generate timestamp in format: YYYYMMDD_HHMMSS"""
@@ -105,7 +113,7 @@ class RPiCameraHeadless:
     def take_photo(self):
         """Take a photo using raspistill"""
         timestamp = self.get_timestamp()
-        filename = f"{self.photos_dir}/{timestamp}.jpg"
+        filename = os.path.join(self.photos_dir, f"{timestamp}.jpg")
         
         try:
             # Temporarily stop preview
@@ -114,39 +122,52 @@ class RPiCameraHeadless:
                 self.stop_preview()
             
             # Take photo with optimized settings for speed
-            result = subprocess.run([
+            cmd = [
                 'raspistill', '-o', filename, 
                 '-t', '100',  # Very short capture time (0.1 seconds)
                 '-q', '90',   # Slightly reduced quality for speed (90% vs 100%)
                 '-w', '1920', '-h', '1080', 
                 '--nopreview',
                 '--immediate'  # Take photo immediately without delay
-            ], capture_output=True, text=True, timeout=3)  # Reduced timeout to 3 seconds
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             
             if result.returncode == 0:
-                if not self.quiet_mode:
-                    print(f"✓ Photo saved: {filename}")
-                    # Show file size
-                    try:
-                        size = os.path.getsize(filename)
+                # Check if file was actually created
+                if os.path.exists(filename):
+                    size = os.path.getsize(filename)
+                    if not self.quiet_mode:
+                        print(f"✓ Photo saved: {filename}")
                         print(f"  File size: {size/1024:.1f} KB")
-                    except:
-                        pass
+                else:
+                    # Always show this error, even in quiet mode
+                    print(f"✗ ERROR: Command succeeded but file not found: {filename}")
+                    print(f"   Check directory permissions: {self.photos_dir}")
             else:
-                if not self.quiet_mode:
-                    print(f"✗ Error taking photo: {result.stderr}")
+                # Always show camera errors, even in quiet mode
+                print(f"✗ ERROR: Camera command failed - Return code: {result.returncode}")
+                if result.stderr:
+                    print(f"   Error details: {result.stderr.strip()}")
+                if "not found" in result.stderr.lower():
+                    print("   Try running: sudo apt-get install libraspberrypi-bin")
+                elif "permission" in result.stderr.lower():
+                    print(f"   Check file permissions on: {self.photos_dir}")
             
             # Restart preview quickly
             if was_active:
-                time.sleep(0.1)  # Reduced from 0.5 to 0.1 seconds
+                time.sleep(0.1)
                 self.start_preview()
                 
         except subprocess.TimeoutExpired:
-            if not self.quiet_mode:
-                print("✗ Photo capture timed out")
+            print("✗ ERROR: Photo capture timed out")
+        except FileNotFoundError:
+            print("✗ ERROR: raspistill command not found")
+            print("   Install with: sudo apt-get install libraspberrypi-bin")
         except Exception as e:
-            if not self.quiet_mode:
-                print(f"✗ Error taking photo: {e}")
+            print(f"✗ ERROR: Unexpected error taking photo: {e}")
+            import traceback
+            traceback.print_exc()
     
     def start_video_recording(self):
         """Start video recording using raspivid"""
@@ -156,7 +177,7 @@ class RPiCameraHeadless:
             return
         
         timestamp = self.get_timestamp()
-        filename = f"{self.videos_dir}/{timestamp}.h264"
+        filename = os.path.join(self.videos_dir, f"{timestamp}.h264")
         
         try:
             # Stop preview first (raspivid will handle its own preview)
