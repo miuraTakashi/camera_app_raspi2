@@ -149,10 +149,36 @@ class RPiCameraHeadless:
                 print(f"✗ ERROR: Camera command failed - Return code: {result.returncode}")
                 if result.stderr:
                     print(f"   Error details: {result.stderr.strip()}")
+                
+                # Specific error code handling
+                if result.returncode == 64:
+                    print("\n🔧 ERROR CODE 64 - Camera Initialization Failed")
+                    print("   This usually means the camera hardware cannot be detected.")
+                    print("   Troubleshooting steps:")
+                    print("   1. Check camera cable connection (firmly seated)")
+                    print("   2. Enable camera: sudo raspi-config → Interface Options → Camera")
+                    print("   3. Reboot after enabling: sudo reboot")
+                    print("   4. Test basic camera: raspistill -o test.jpg -t 2000")
+                    print("   5. Check camera detection: vcgencmd get_camera")
+                    print("   6. Check for hardware issues (try different camera/cable)")
+                elif result.returncode == 1:
+                    print("\n🔧 ERROR CODE 1 - General Camera Error")
+                    print("   Try: sudo modprobe bcm2835-v4l2")
+                elif result.returncode == 70:
+                    print("\n🔧 ERROR CODE 70 - Software Error")
+                    print("   Camera software issue. Try: sudo apt-get update && sudo apt-get install --reinstall libraspberrypi-bin")
+                elif result.returncode == 130:
+                    print("\n🔧 ERROR CODE 130 - Interrupted")
+                    print("   Camera command was interrupted")
+                
                 if "not found" in result.stderr.lower():
-                    print("   Try running: sudo apt-get install libraspberrypi-bin")
+                    print("   📦 Install camera tools: sudo apt-get install libraspberrypi-bin")
                 elif "permission" in result.stderr.lower():
-                    print(f"   Check file permissions on: {self.photos_dir}")
+                    print(f"   🔐 Check permissions: sudo chown -R $USER:$USER {self.photos_dir}")
+                elif "busy" in result.stderr.lower():
+                    print("   📷 Camera busy - close other camera applications")
+                elif "timeout" in result.stderr.lower():
+                    print("   ⏱️ Camera timeout - check hardware connection")
             
             # Restart preview quickly
             if was_active:
