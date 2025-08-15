@@ -13,12 +13,14 @@ import signal
 import termios
 import tty
 import shutil
+import getpass
 from datetime import datetime, timezone, timedelta
 
 # SAMBA共有フォルダ設定
-SAMBA_SHARE_PATH = '/home/pi/camera_share'  # ローカルの共有フォルダパス
-SAMBA_CONFIG_FILE = '/etc/samba/smb.conf'    # SAMBA設定ファイル
-SHARE_NAME = 'camera_share'                  # ネットワーク共有名
+CURRENT_USER = getpass.getuser()  # 現在のユーザー名を取得
+SAMBA_SHARE_PATH = f'/home/{CURRENT_USER}/public'        # パブリックフォルダに変更
+SAMBA_CONFIG_FILE = '/etc/samba/smb.conf'                # SAMBA設定ファイル
+SHARE_NAME = 'public'                                     # 共有名をpublicに変更
 
 class CameraApp:
     def __init__(self):
