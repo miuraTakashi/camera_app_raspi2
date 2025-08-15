@@ -20,7 +20,7 @@ from datetime import datetime, timezone, timedelta
 CURRENT_USER = getpass.getuser()  # 現在のユーザー名を取得
 SAMBA_SHARE_PATH = f'/home/{CURRENT_USER}/public'        # パブリックフォルダに変更
 SAMBA_CONFIG_FILE = '/etc/samba/smb.conf'                # SAMBA設定ファイル
-SHARE_NAME = 'public'                                     # 共有名をpublicに変更
+SHARE_NAME = 'camera_public'                              # 共有名をcamera_publicに変更
 
 class CameraApp:
     def __init__(self):
@@ -100,6 +100,7 @@ class CameraApp:
                 print(f"   パス: {SAMBA_SHARE_PATH}")
             else:
                 print("⚠️  SAMBA共有設定が見つかりません")
+                print(f"   期待される共有名: {SHARE_NAME}")
                 print("   SAMBA設定ファイルに共有設定を追加してください")
                 self.create_samba_config()
                 
@@ -112,18 +113,27 @@ class CameraApp:
             # 共有設定のテンプレート
             share_config = f"""
 [{SHARE_NAME}]
-   comment = Camera App Shared Folder
+   comment = Camera App Public Shared Folder - Guest Access Allowed
    path = {SAMBA_SHARE_PATH}
    browseable = yes
    writable = yes
    guest ok = yes
+   guest only = yes
    create mask = 0777
    directory mask = 0777
-   force user = pi
-   force group = pi
+   force user = nobody
+   force group = nogroup
+   hide files = /.*/lost+found/
+   veto files = /.*/lost+found/
+   delete veto files = yes
+   map archive = no
+   map hidden = no
+   map system = no
+   map readonly = no
 """
             
             print("📝 SAMBA共有設定を作成中...")
+            print(f"   共有名: {SHARE_NAME}")
             print("   以下の設定を /etc/samba/smb.conf に追加してください:")
             print(share_config)
             
