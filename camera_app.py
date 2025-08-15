@@ -70,47 +70,47 @@ class CameraApp:
             os.chmod(os.path.join(SAMBA_SHARE_PATH, 'photos'), 0o777)
             os.chmod(os.path.join(SAMBA_SHARE_PATH, 'videos'), 0o777)
             
-            print(f"📁 SAMBA共有フォルダを作成: {SAMBA_SHARE_PATH}")
-            print(f"   📸 写真フォルダ: {os.path.join(SAMBA_SHARE_PATH, 'photos')}")
-            print(f"   🎥 動画フォルダ: {os.path.join(SAMBA_SHARE_PATH, 'videos')}")
+            print(f"📁 Creating SAMBA shared folder: {SAMBA_SHARE_PATH}")
+            print(f"   📸 Photos folder: {os.path.join(SAMBA_SHARE_PATH, 'photos')}")
+            print(f"   🎥 Videos folder: {os.path.join(SAMBA_SHARE_PATH, 'videos')}")
             
-            # SAMBA設定ファイルの確認
+            # Check SAMBA config file
             if os.path.exists(SAMBA_CONFIG_FILE):
-                print("✅ SAMBA設定ファイルが存在します")
+                print("✅ SAMBA config file exists")
                 self.check_samba_config()
             else:
-                print("⚠️  SAMBA設定ファイルが見つかりません")
-                print("   SAMBAのインストールと設定が必要です")
+                print("⚠️  SAMBA config file not found")
+                print("   SAMBA installation and configuration required")
                 
         except Exception as e:
-            print(f"❌ SAMBA共有フォルダ設定エラー: {e}")
-            print("   フォルダの作成権限を確認してください")
+            print(f"❌ SAMBA shared folder setup error: {e}")
+            print("   Check folder creation permissions")
     
     def check_samba_config(self):
-        """SAMBA設定をチェック"""
+        """Check SAMBA configuration"""
         try:
-            # SAMBA設定ファイルの内容を確認
+            # Check SAMBA config file content
             with open(SAMBA_CONFIG_FILE, 'r') as f:
                 config_content = f.read()
             
-            # 共有設定が含まれているかチェック
+            # Check if share configuration exists
             if f'[{SHARE_NAME}]' in config_content:
-                print("✅ SAMBA共有設定が確認されました")
-                print(f"   共有名: {SHARE_NAME}")
-                print(f"   パス: {SAMBA_SHARE_PATH}")
+                print("✅ SAMBA share configuration confirmed")
+                print(f"   Share name: {SHARE_NAME}")
+                print(f"   Path: {SAMBA_SHARE_PATH}")
             else:
-                print("⚠️  SAMBA共有設定が見つかりません")
-                print(f"   期待される共有名: {SHARE_NAME}")
-                print("   SAMBA設定ファイルに共有設定を追加してください")
+                print("⚠️  SAMBA share configuration not found")
+                print(f"   Expected share name: {SHARE_NAME}")
+                print("   Add share configuration to SAMBA config file")
                 self.create_samba_config()
                 
         except Exception as e:
-            print(f"⚠️  SAMBA設定チェックエラー: {e}")
+            print(f"⚠️  SAMBA config check error: {e}")
     
     def create_samba_config(self):
-        """SAMBA設定ファイルに共有設定を追加"""
+        """Add share configuration to SAMBA config file"""
         try:
-            # 共有設定のテンプレート
+            # Share configuration template
             share_config = f"""
 [{SHARE_NAME}]
    comment = Camera App Public Shared Folder - Guest Access Allowed
@@ -132,57 +132,57 @@ class CameraApp:
    map readonly = no
 """
             
-            print("📝 SAMBA共有設定を作成中...")
-            print(f"   共有名: {SHARE_NAME}")
-            print("   以下の設定を /etc/samba/smb.conf に追加してください:")
+            print("📝 Creating SAMBA share configuration...")
+            print(f"   Share name: {SHARE_NAME}")
+            print("   Add the following configuration to /etc/samba/smb.conf:")
             print(share_config)
             
         except Exception as e:
-            print(f"❌ SAMBA設定作成エラー: {e}")
+            print(f"❌ SAMBA config creation error: {e}")
     
     def save_to_samba(self, file_path, file_type):
-        """SAMBA共有フォルダにファイルを保存"""
+        """Save file to SAMBA shared folder"""
         try:
             file_name = os.path.basename(file_path)
             
-            # ファイルタイプに応じて保存先を決定
-            if file_type == "写真":
+            # Determine destination based on file type
+            if file_type == "Photo":
                 dest_dir = os.path.join(SAMBA_SHARE_PATH, 'photos')
                 dest_path = os.path.join(dest_dir, file_name)
-            else:  # 動画
+            else:  # Video
                 dest_dir = os.path.join(SAMBA_SHARE_PATH, 'videos')
                 dest_path = os.path.join(dest_dir, file_name)
             
-            # ファイルを共有フォルダにコピー
+            # Copy file to shared folder
             shutil.copy2(file_path, dest_path)
             
-            # 権限を設定（誰でも読み書き可能）
+            # Set permissions (readable/writable by everyone)
             os.chmod(dest_path, 0o777)
             
-            # ファイルの所有者をゲストユーザー（nobody）に設定（誰でも見えるように）
+            # Set file owner to guest user (nobody) for universal access
             try:
                 import pwd
                 import grp
-                # nobodyユーザーとnogroupグループを取得
+                # Get nobody user and nogroup group
                 nobody_uid = pwd.getpwnam('nobody').pw_uid
                 nogroup_gid = grp.getgrnam('nogroup').gr_gid
                 os.chown(dest_path, nobody_uid, nogroup_gid)
-                print(f"   🔓 ファイル所有者: nobody:nogroup（誰でもアクセス可能）")
+                print(f"   🔓 File owner: nobody:nogroup (Universal access)")
             except Exception as chown_error:
-                print(f"⚠️  ファイル所有者設定エラー: {chown_error}")
-                print("   現在のユーザーでファイルを作成します")
+                print(f"⚠️  File owner setting error: {chown_error}")
+                print("   Creating file with current user")
             
-            # ファイルの属性を確認
+            # Get file attributes
             stat_info = os.stat(dest_path)
-            print(f"✅ {file_type}をSAMBA共有フォルダに保存: {file_name}")
-            print(f"   保存先: {dest_path}")
-            print(f"   ファイル権限: {oct(stat_info.st_mode)[-3:]}")
-            print(f"   ネットワークパス: \\\\{self.get_ip_address()}\\{SHARE_NAME}\\{os.path.basename(dest_dir)}\\{file_name}")
+            print(f"✅ {file_type} saved to SAMBA shared folder: {file_name}")
+            print(f"   Save location: {dest_path}")
+            print(f"   File permissions: {oct(stat_info.st_mode)[-3:]}")
+            print(f"   Network path: \\\\{self.get_ip_address()}\\{SHARE_NAME}\\{os.path.basename(dest_dir)}\\{file_name}")
             
             return True
             
         except Exception as e:
-            print(f"❌ {file_type}保存エラー: {e}")
+            print(f"❌ {file_type} save error: {e}")
             return False
     
     def get_ip_address(self):
@@ -211,14 +211,14 @@ class CameraApp:
             self.supports_quality = '-q' in help_text
             self.supports_resolution = '-w' in help_text and '-h' in help_text
             
-            print("📷 カメラツール互換性チェック:")
+            print("📷 Camera tool compatibility check:")
             print(f"   --immediate: {'✅' if self.supports_immediate else '❌'}")
-            print(f"   -q (品質): {'✅' if self.supports_quality else '❌'}")
-            print(f"   -w/-h (解像度): {'✅' if self.supports_resolution else '❌'}")
+            print(f"   -q (quality): {'✅' if self.supports_quality else '❌'}")
+            print(f"   -w/-h (resolution): {'✅' if self.supports_resolution else '❌'}")
             
         except Exception as e:
-            print(f"⚠️  互換性チェックエラー: {e}")
-            # デフォルトで安全な設定を使用
+            print(f"⚠️  Compatibility check error: {e}")
+            # Use safe defaults
             self.supports_immediate = False
             self.supports_quality = True
             self.supports_resolution = True
@@ -234,16 +234,16 @@ class CameraApp:
             # 残っているプロセスを確認
             result = subprocess.run(['pgrep', '-f', 'raspistill'], capture_output=True, text=True)
             if result.stdout:
-                print(f"⚠️  残存raspistillプロセス: {result.stdout.strip()}")
+                print(f"⚠️  Remaining raspistill processes: {result.stdout.strip()}")
                 subprocess.run(['pkill', '-9', '-f', 'raspistill'], capture_output=True)
             
             result = subprocess.run(['pgrep', '-f', 'raspivid'], capture_output=True, text=True)
             if result.stdout:
-                print(f"⚠️  残存raspividプロセス: {result.stdout.strip()}")
+                print(f"⚠️  Remaining raspivid processes: {result.stdout.strip()}")
                 subprocess.run(['pkill', '-9', '-f', 'raspivid'], capture_output=True)
                 
         except Exception as e:
-            print(f"⚠️  プロセスクリーンアップエラー: {e}")
+            print(f"⚠️  Process cleanup error: {e}")
 
     def setup_terminal(self):
         """ターミナル設定"""
@@ -291,15 +291,15 @@ class CameraApp:
     def cleanup_old_files(self):
         """古いファイルをクリーンアップ"""
         try:
-            # 写真のクリーンアップ
+            # Photo cleanup
             photo_files = [f for f in os.listdir(self.photos_dir) if f.endswith('.jpg')]
             photo_files.sort()
             
-            # 100枚を超える場合は古いものを削除
+            # Remove old files if more than 100 photos
             if len(photo_files) > 100:
                 for old_file in photo_files[:-100]:
                     os.remove(os.path.join(self.photos_dir, old_file))
-                    print(f"🗑️  古い写真を削除: {old_file}")
+                    print(f"🗑️  Removed old photo: {old_file}")
             
             # 動画のクリーンアップ
             video_files = [f for f in os.listdir(self.videos_dir) if f.endswith('.h264')]
@@ -315,19 +315,19 @@ class CameraApp:
             print(f"⚠️  ファイルクリーンアップエラー: {e}")
 
     def start_preview(self):
-        """カメラプレビュー開始"""
+        """Start camera preview"""
         try:
             if self.preview_process:
                 self.stop_preview()
             
             self.cleanup_camera_processes()
             
-            # プレビュー開始
+            # Start preview
             cmd = [
                 'raspistill',
-                '-t', '0',  # 無制限
-                '-f',  # フルスクリーン
-                '-n',  # プレビュー無効（ヘッドレス用）
+                '-t', '0',  # Unlimited
+                '-f',  # Fullscreen
+                '-n',  # No preview (headless mode)
                 '-o', '/dev/null'
             ]
             
@@ -338,59 +338,59 @@ class CameraApp:
             )
             
             if not self.quiet_mode:
-                print("📷 カメラプレビュー開始")
+                print("📷 Camera preview started")
                 
         except Exception as e:
-            print(f"❌ プレビュー開始エラー: {e}")
+            print(f"❌ Preview start error: {e}")
 
     def stop_preview(self):
-        """カメラプレビュー停止"""
+        """Stop camera preview"""
         try:
             if self.preview_process:
                 self.preview_process.terminate()
                 self.preview_process.wait(timeout=5)
                 self.preview_process = None
                 
-            # 残っているプロセスを確認
+            # Check remaining processes
             result = subprocess.run(['pgrep', '-f', 'raspistill'], capture_output=True, text=True)
             if result.stdout:
                 subprocess.run(['pkill', '-9', '-f', 'raspistill'], capture_output=True)
                 
         except Exception as e:
-            print(f"⚠️  プレビュー停止エラー: {e}")
+            print(f"⚠️  Preview stop error: {e}")
 
     def take_photo(self):
-        """写真撮影"""
+        """Take photo"""
         try:
             if self.is_recording:
-                print("⚠️  動画録画中です。録画を停止してから撮影してください")
+                print("⚠️  Video recording in progress. Stop recording before taking photo")
                 return
             
             timestamp = self.get_timestamp()
             filename = f"{timestamp}.jpg"
             filepath = os.path.join(self.photos_dir, filename)
             
-            # ディスク容量チェック
+            # Check disk space
             free_gb = self.check_disk_space()
             if free_gb < 1.0:
-                print("⚠️  ディスク容量が不足しています")
+                print("⚠️  Insufficient disk space")
                 self.cleanup_old_files()
             
-            # プレビューを一時停止
+            # Pause preview
             self.stop_preview()
             time.sleep(0.5)
             
             # 写真撮影（互換性に基づいてパラメータを選択）
             cmd = ['raspistill', '-o', filepath]
             
-            # タイマー設定（古いバージョンでも動作）
-            cmd.extend(['-t', '1000'])
+            # Timer setting (extended for better preview)
+            cmd.extend(['-t', '5000'])  # 5 seconds for better preview
             
-            # 品質設定（サポートされている場合のみ）
+            # Quality setting (only if supported)
             if hasattr(self, 'supports_quality') and self.supports_quality:
                 cmd.extend(['-q', '90'])
             
-            # 解像度設定（サポートされている場合のみ）
+            # Resolution setting (only if supported)
             if hasattr(self, 'supports_resolution') and self.supports_resolution:
                 cmd.extend(['-w', '1920', '-h', '1080'])
             
@@ -398,20 +398,20 @@ class CameraApp:
             
             if result.returncode == 0 and os.path.exists(filepath):
                 file_size = os.path.getsize(filepath) / 1024  # KB
-                print(f"📸 写真撮影完了: {filename} ({file_size:.1f} KB)")
+                print(f"📸 Photo taken successfully: {filename} ({file_size:.1f} KB)")
                 
-                # SAMBA共有フォルダに保存
-                self.save_to_samba(filepath, "写真")
+                # Save to SAMBA shared folder
+                self.save_to_samba(filepath, "Photo")
                 
             else:
-                print(f"❌ 写真撮影エラー: {result.stderr}")
+                print(f"❌ Photo capture error: {result.stderr}")
                 
         except subprocess.TimeoutExpired:
-            print("❌ 写真撮影がタイムアウトしました")
+            print("❌ Photo capture timed out")
         except Exception as e:
-            print(f"❌ 写真撮影エラー: {e}")
+            print(f"❌ Photo capture error: {e}")
         finally:
-            # プレビュー再開
+            # Resume preview
             time.sleep(0.5)
             self.start_preview()
 
