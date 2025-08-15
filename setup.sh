@@ -1,63 +1,72 @@
 #!/bin/bash
 
-# Raspberry Pi 2 Camera App Setup Script
+# Raspberry Pi Camera App Setup Script
+# Installs dependencies for the headless camera application
 
-echo "=== Raspberry Pi 2 Camera App Setup ==="
-echo
+echo "🚀 Raspberry Pi Camera App Setup"
+echo "================================"
 
-# Check if running on Raspberry Pi
-if ! grep -q "BCM" /proc/cpuinfo; then
-    echo "Warning: This doesn't appear to be a Raspberry Pi"
-    echo "Some functions may not work properly"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-# Update system packages
-echo "Updating system packages..."
+# Update package list
+echo "📦 Updating package list..."
 sudo apt-get update
-sudo apt-get upgrade -y
 
-# Check and install camera tools if needed
-echo "Checking camera tools..."
+# Install camera tools
+echo "📷 Installing camera tools..."
 if ! command -v raspistill &> /dev/null; then
-    echo "Installing camera tools..."
-    # On older Raspberry Pi OS versions, try libraspberrypi-bin
-    sudo apt-get install -y libraspberrypi-bin || echo "Camera tools may already be installed or available"
+    echo "Installing libraspberrypi-bin..."
+    sudo apt-get install -y libraspberrypi-bin
 else
-    echo "Camera tools already available"
+    echo "Camera tools already installed"
 fi
 
-# Install Python3 if not present
-echo "Installing Python dependencies..."
-sudo apt-get install -y python3
+# Install Python dependencies
+echo "🐍 Installing Python dependencies..."
+if command -v pip3 &> /dev/null; then
+    echo "Installing Google Drive API libraries..."
+    pip3 install google-auth==2.23.4 google-auth-oauthlib==1.1.0 google-auth-httplib2==0.1.1 google-api-python-client==2.108.0
+else
+    echo "Installing pip3 and Google Drive API libraries..."
+    sudo apt-get install -y python3-pip
+    pip3 install google-auth==2.23.4 google-auth-oauthlib==1.1.0 google-auth-httplib2==0.1.1 google-api-python-client==2.108.0
+fi
 
-# No additional Python packages needed - using standard library only
-echo "✓ No additional Python packages required"
+# Install additional system dependencies
+echo "🔧 Installing system dependencies..."
+sudo apt-get install -y ffmpeg
 
 # Create directories
-echo "Creating output directories..."
-mkdir -p photos
-mkdir -p videos
+echo "📁 Creating directories..."
+mkdir -p photos videos
 
 # Set permissions
-echo "Setting up permissions..."
-sudo usermod -a -G video $USER
+echo "🔐 Setting permissions..."
+chmod 755 photos videos
 
-# Make the main script executable
-chmod +x camera_app.py
+# Check camera module
+echo "📷 Checking camera module..."
+if [ -e /dev/video0 ]; then
+    echo "✅ Camera module detected"
+else
+    echo "⚠️  Camera module not detected"
+    echo "   Make sure camera is enabled in raspi-config"
+fi
 
-echo
-echo "=== Setup Complete! ==="
-echo
-echo "Next steps:"
-echo "1. Enable camera module: sudo raspi-config"
-echo "   -> Interface Options -> Camera -> Enable"
-echo "2. Reboot the Pi: sudo reboot"
-echo "3. Test camera: raspistill -o test.jpg -t 2000"
-echo "4. Run the app: python3 camera_app.py"
-echo
-echo "Note: You may need to log out and back in for group permissions to take effect." 
+# Check internet connection
+echo "🌐 Checking internet connection..."
+if ping -c 1 google.com &> /dev/null; then
+    echo "✅ Internet connection available"
+else
+    echo "⚠️  No internet connection"
+    echo "   Google Drive upload will not work without internet"
+fi
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "📋 Next steps:"
+echo "1. Place your credentials.json file in this directory"
+echo "2. Run: python3 camera_app.py"
+echo "3. Follow Google authentication prompts"
+echo ""
+echo "🔗 Google Cloud Console: https://console.cloud.google.com/"
+echo "📖 Setup guide: See README.md for detailed instructions" 
