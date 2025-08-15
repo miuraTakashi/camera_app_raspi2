@@ -18,39 +18,39 @@ echo "📁 共有フォルダ: $SHARE_PATH"
 echo ""
 echo "🔐 フォルダとファイルの権限を確認・修正中..."
 
-# 共有フォルダの権限を設定
+# 共有フォルダの権限を設定（誰でもアクセス可能）
 sudo chmod -R 777 "$SHARE_PATH"
-sudo chown -R $CURRENT_USER:$CURRENT_USER "$SHARE_PATH"
+sudo chown -R nobody:nogroup "$SHARE_PATH"
 
 # サブフォルダの権限も確認
 if [ -d "$SHARE_PATH/photos" ]; then
     sudo chmod 777 "$SHARE_PATH/photos"
-    sudo chown $CURRENT_USER:$CURRENT_USER "$SHARE_PATH/photos"
-    echo "   ✅ photosフォルダ権限設定完了"
+    sudo chown nobody:nogroup "$SHARE_PATH/photos"
+    echo "   ✅ photosフォルダ権限設定完了（nobody:nogroup）"
 fi
 
 if [ -d "$SHARE_PATH/videos" ]; then
     sudo chmod 777 "$SHARE_PATH/videos"
-    sudo chown $CURRENT_USER:$CURRENT_USER "$SHARE_PATH/videos"
-    echo "   ✅ videosフォルダ権限設定完了"
+    sudo chown nobody:nogroup "$SHARE_PATH/videos"
+    echo "   ✅ videosフォルダ権限設定完了（nobody:nogroup）"
 fi
 
 # 2. 既存ファイルの権限も修正
 echo ""
 echo "📄 既存ファイルの権限を修正中..."
 
-# 写真ファイルの権限修正
+# 写真ファイルの権限修正（誰でもアクセス可能）
 if [ -d "$SHARE_PATH/photos" ]; then
     find "$SHARE_PATH/photos" -type f -exec sudo chmod 777 {} \;
-    find "$SHARE_PATH/photos" -type f -exec sudo chown $CURRENT_USER:$CURRENT_USER {} \;
-    echo "   ✅ 写真ファイル権限修正完了"
+    find "$SHARE_PATH/photos" -type f -exec sudo chown nobody:nogroup {} \;
+    echo "   ✅ 写真ファイル権限修正完了（nobody:nogroup）"
 fi
 
-# 動画ファイルの権限修正
+# 動画ファイルの権限修正（誰でもアクセス可能）
 if [ -d "$SHARE_PATH/videos" ]; then
     find "$SHARE_PATH/videos" -type f -exec sudo chmod 777 {} \;
-    find "$SHARE_PATH/videos" -type f -exec sudo chown $CURRENT_USER:$CURRENT_USER {} \;
-    echo "   ✅ 動画ファイル権限修正完了"
+    find "$SHARE_PATH/videos" -type f -exec sudo chown nobody:nogroup {} \;
+    echo "   ✅ 動画ファイル権限修正完了（nobody:nogroup）"
 fi
 
 # 3. SAMBA設定ファイルの確認・修正
