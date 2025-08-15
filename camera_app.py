@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Raspberry Pi 2 Camera Application with Google Drive Upload
-Headless camera application that automatically uploads photos and videos to Google Drive
+Raspberry Pi 2 Camera Application with SAMBA Network Share
+Headless camera application that saves photos and videos to SAMBA shared folder
 """
 
 import os
@@ -14,20 +14,11 @@ import termios
 import tty
 import shutil
 from datetime import datetime, timezone, timedelta
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-import pickle
-import json
 
-# Google Drive API設定
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.pickle'
-CONFIG_FILE = 'camera_config.json'
-DEFAULT_FOLDER_ID = '1ffVLu6KyQTnz_9ppsqVIGkCXXLdT90U7'  # デフォルトのフォルダID
+# SAMBA共有フォルダ設定
+SAMBA_SHARE_PATH = '/home/pi/camera_share'  # ローカルの共有フォルダパス
+SAMBA_CONFIG_FILE = '/etc/samba/smb.conf'    # SAMBA設定ファイル
+SHARE_NAME = 'camera_share'                  # ネットワーク共有名
 
 class CameraApp:
     def __init__(self):
@@ -50,10 +41,8 @@ class CameraApp:
         # カメラツールの互換性チェック
         self.check_camera_compatibility()
         
-        # Google Drive設定
-        self.drive_service = None
-        self.folder_id = self.load_config()
-        self.setup_google_drive()
+        # SAMBA共有フォルダ設定
+        self.setup_samba_share()
         
         # 設定
         self.quiet_mode = False
@@ -66,154 +55,121 @@ class CameraApp:
         # 起動時のプロセスクリーンアップ
         self.cleanup_camera_processes()
         
-    def load_config(self):
-        """設定ファイルを読み込み"""
+    def setup_samba_share(self):
+        """SAMBA共有フォルダの設定"""
         try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r') as f:
-                    config = json.load(f)
-                    folder_id = config.get('folder_id', DEFAULT_FOLDER_ID)
-                    print(f"📁 設定ファイルからフォルダIDを読み込み: {folder_id}")
-                    return folder_id
+            # 共有フォルダの作成
+            os.makedirs(SAMBA_SHARE_PATH, exist_ok=True)
+            os.makedirs(os.path.join(SAMBA_SHARE_PATH, 'photos'), exist_ok=True)
+            os.makedirs(os.path.join(SAMBA_SHARE_PATH, 'videos'), exist_ok=True)
+            
+            # 権限を設定（誰でも読み書き可能）
+            os.chmod(SAMBA_SHARE_PATH, 0o777)
+            os.chmod(os.path.join(SAMBA_SHARE_PATH, 'photos'), 0o777)
+            os.chmod(os.path.join(SAMBA_SHARE_PATH, 'videos'), 0o777)
+            
+            print(f"📁 SAMBA共有フォルダを作成: {SAMBA_SHARE_PATH}")
+            print(f"   📸 写真フォルダ: {os.path.join(SAMBA_SHARE_PATH, 'photos')}")
+            print(f"   🎥 動画フォルダ: {os.path.join(SAMBA_SHARE_PATH, 'videos')}")
+            
+            # SAMBA設定ファイルの確認
+            if os.path.exists(SAMBA_CONFIG_FILE):
+                print("✅ SAMBA設定ファイルが存在します")
+                self.check_samba_config()
             else:
-                # デフォルト設定ファイルを作成
-                config = {
-                    'folder_id': DEFAULT_FOLDER_ID,
-                    'description': 'Google DriveフォルダIDを変更する場合は、このファイルを編集してください'
-                }
-                with open(CONFIG_FILE, 'w') as f:
-                    json.dump(config, f, indent=2, ensure_ascii=False)
-                print(f"📁 デフォルト設定ファイルを作成: {CONFIG_FILE}")
-                print(f"   フォルダID: {DEFAULT_FOLDER_ID}")
-                return DEFAULT_FOLDER_ID
-        except Exception as e:
-            print(f"⚠️  設定ファイル読み込みエラー: {e}")
-            print(f"   デフォルトフォルダIDを使用: {DEFAULT_FOLDER_ID}")
-            return DEFAULT_FOLDER_ID
-
-    def setup_google_drive(self):
-        """Google Drive APIの設定"""
-        try:
-            creds = None
-            
-            # サービスアカウントキーを優先的に使用
-            service_account_key = 'service-account-key.json'
-            if os.path.exists(service_account_key):
-                print("🔑 サービスアカウントキーを使用して認証します...")
-                try:
-                    from google.oauth2 import service_account
-                    creds = service_account.Credentials.from_service_account_file(
-                        service_account_key, 
-                        scopes=SCOPES
-                    )
-                    print("✅ サービスアカウント認証が完了しました")
-                except Exception as sa_error:
-                    print(f"⚠️  サービスアカウント認証が失敗しました: {sa_error}")
-                    print("   OAuth認証にフォールバックします...")
-            
-            # サービスアカウントが失敗した場合、OAuth認証を試行
-            if not creds:
-                # トークンファイルが存在する場合は読み込み
-                if os.path.exists(TOKEN_FILE):
-                    with open(TOKEN_FILE, 'rb') as token:
-                        creds = pickle.load(token)
+                print("⚠️  SAMBA設定ファイルが見つかりません")
+                print("   SAMBAのインストールと設定が必要です")
                 
-                # 有効な認証情報がない場合は認証フローを実行
-                if not creds or not creds.valid:
-                    if creds and creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                    else:
-                        if os.path.exists(CREDENTIALS_FILE):
-                            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                            
-                            # CUI環境での認証フロー
-                            print("🔐 Google Drive認証を開始します...")
-                            
-                            try:
-                                # まずブラウザでの認証を試行
-                                print("🌐 ブラウザでの認証を試行中...")
-                                creds = flow.run_local_server(port=0)
-                                print("✅ ブラウザ認証が完了しました")
-                            except Exception as browser_error:
-                                print("⚠️  ブラウザ認証が失敗しました。CUI認証を試行します...")
-                                try:
-                                    # CUI環境での認証フロー
-                                    print("💻 CUI認証を開始します...")
-                                    creds = flow.run_console()
-                                    print("✅ CUI認証が完了しました")
-                                except Exception as console_error:
-                                    print("❌ CUI認証も失敗しました")
-                                    print("   手動で認証URLにアクセスしてください")
-                                    
-                                    # 手動認証用のURLを表示
-                                    auth_url, _ = flow.authorization_url()
-                                    print(f"\n🔗 認証URL: {auth_url}")
-                                    print("   このURLをブラウザが利用できる端末で開いてください")
-                                    print("   認証コードを入力してください:")
-                                    
-                                    auth_code = input("認証コード: ").strip()
-                                    if auth_code:
-                                        print("🔄 認証コードを処理中...")
-                                        flow.fetch_token(code=auth_code)
-                                        creds = flow.credentials
-                                        print("✅ 手動認証が完了しました")
-                                    else:
-                                        print("❌ 認証コードが入力されませんでした")
-                                        return
-                        else:
-                            print("⚠️  Google Drive認証ファイルが見つかりません")
-                            print("   credentials.json または service-account-key.json ファイルを配置してください")
-                            print("   または、Google Cloud ConsoleでOAuth 2.0クライアントIDを作成してください")
-                            return
-                    
-                    # トークンを保存
-                    with open(TOKEN_FILE, 'wb') as token:
-                        pickle.dump(creds, token)
-                    print("💾 認証トークンを保存しました")
+        except Exception as e:
+            print(f"❌ SAMBA共有フォルダ設定エラー: {e}")
+            print("   フォルダの作成権限を確認してください")
+    
+    def check_samba_config(self):
+        """SAMBA設定をチェック"""
+        try:
+            # SAMBA設定ファイルの内容を確認
+            with open(SAMBA_CONFIG_FILE, 'r') as f:
+                config_content = f.read()
             
-            # Drive APIサービスを構築
-            self.drive_service = build('drive', 'v3', credentials=creds)
-            print("✅ Google Drive API接続完了")
+            # 共有設定が含まれているかチェック
+            if f'[{SHARE_NAME}]' in config_content:
+                print("✅ SAMBA共有設定が確認されました")
+                print(f"   共有名: {SHARE_NAME}")
+                print(f"   パス: {SAMBA_SHARE_PATH}")
+            else:
+                print("⚠️  SAMBA共有設定が見つかりません")
+                print("   SAMBA設定ファイルに共有設定を追加してください")
+                self.create_samba_config()
+                
+        except Exception as e:
+            print(f"⚠️  SAMBA設定チェックエラー: {e}")
+    
+    def create_samba_config(self):
+        """SAMBA設定ファイルに共有設定を追加"""
+        try:
+            # 共有設定のテンプレート
+            share_config = f"""
+[{SHARE_NAME}]
+   comment = Camera App Shared Folder
+   path = {SAMBA_SHARE_PATH}
+   browseable = yes
+   writable = yes
+   guest ok = yes
+   create mask = 0777
+   directory mask = 0777
+   force user = pi
+   force group = pi
+"""
+            
+            print("📝 SAMBA共有設定を作成中...")
+            print("   以下の設定を /etc/samba/smb.conf に追加してください:")
+            print(share_config)
             
         except Exception as e:
-            print(f"❌ Google Drive設定エラー: {e}")
-            print("   インターネット接続と認証ファイルを確認してください")
-            print("   CUI環境の場合は、別の端末で認証URLにアクセスしてください")
-            print("   または、サービスアカウントキーを使用してください")
+            print(f"❌ SAMBA設定作成エラー: {e}")
     
-    def upload_to_drive(self, file_path, file_type):
-        """Google Driveにファイルをアップロード"""
-        if not self.drive_service:
-            print("⚠️  Google Drive APIが設定されていません")
-            return False
-        
+    def save_to_samba(self, file_path, file_type):
+        """SAMBA共有フォルダにファイルを保存"""
         try:
             file_name = os.path.basename(file_path)
             
-            # ファイルのメタデータ
-            file_metadata = {
-                'name': file_name,
-                'parents': [DEFAULT_FOLDER_ID]
-            }
+            # ファイルタイプに応じて保存先を決定
+            if file_type == "写真":
+                dest_dir = os.path.join(SAMBA_SHARE_PATH, 'photos')
+                dest_path = os.path.join(dest_dir, file_name)
+            else:  # 動画
+                dest_dir = os.path.join(SAMBA_SHARE_PATH, 'videos')
+                dest_path = os.path.join(dest_dir, file_name)
             
-            # メディアファイルの準備
-            media = MediaFileUpload(file_path, resumable=True)
+            # ファイルを共有フォルダにコピー
+            shutil.copy2(file_path, dest_path)
             
-            # ファイルをアップロード
-            print(f"📤 {file_type}をGoogle Driveにアップロード中...")
-            file = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id,name,webViewLink'
-            ).execute()
+            # 権限を設定（誰でも読み書き可能）
+            os.chmod(dest_path, 0o777)
             
-            print(f"✅ {file_type}アップロード完了: {file_name}")
-            print(f"🔗 リンク: {file.get('webViewLink')}")
+            print(f"✅ {file_type}をSAMBA共有フォルダに保存: {file_name}")
+            print(f"   保存先: {dest_path}")
+            print(f"   ネットワークパス: \\\\{self.get_ip_address()}\\{SHARE_NAME}\\{os.path.basename(dest_dir)}\\{file_name}")
+            
             return True
             
         except Exception as e:
-            print(f"❌ {file_type}アップロードエラー: {e}")
+            print(f"❌ {file_type}保存エラー: {e}")
             return False
+    
+    def get_ip_address(self):
+        """IPアドレスを取得"""
+        try:
+            # ネットワークインターフェースからIPアドレスを取得
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                ip_addresses = result.stdout.strip().split()
+                # 最初のIPアドレスを返す（通常はローカルIP）
+                return ip_addresses[0] if ip_addresses else "unknown"
+            else:
+                return "unknown"
+        except Exception:
+            return "unknown"
 
     def check_camera_compatibility(self):
         """カメラツールの互換性をチェック"""
@@ -416,8 +372,8 @@ class CameraApp:
                 file_size = os.path.getsize(filepath) / 1024  # KB
                 print(f"📸 写真撮影完了: {filename} ({file_size:.1f} KB)")
                 
-                # Google Driveにアップロード
-                self.upload_to_drive(filepath, "写真")
+                # SAMBA共有フォルダに保存
+                self.save_to_samba(filepath, "写真")
                 
             else:
                 print(f"❌ 写真撮影エラー: {result.stderr}")
@@ -508,8 +464,8 @@ class CameraApp:
                     file_size = os.path.getsize(filepath) / (1024 * 1024)  # MB
                     print(f"🎥 動画録画完了: {latest_video} ({file_size:.1f} MB)")
                     
-                    # Google Driveにアップロード
-                    self.upload_to_drive(filepath, "動画")
+                    # SAMBA共有フォルダに保存
+                    self.save_to_samba(filepath, "動画")
                     
         except Exception as e:
             print(f"❌ 動画録画停止エラー: {e}")
