@@ -45,6 +45,9 @@ class CameraApp:
         self.video_process = None
         self.is_recording = False
         
+        # カメラツールの互換性チェック
+        self.check_camera_compatibility()
+        
         # Google Drive設定
         self.drive_service = None
         self.setup_google_drive()
@@ -129,6 +132,30 @@ class CameraApp:
         except Exception as e:
             print(f"❌ {file_type}アップロードエラー: {e}")
             return False
+
+    def check_camera_compatibility(self):
+        """カメラツールの互換性をチェック"""
+        try:
+            # raspistillのバージョンチェック
+            result = subprocess.run(['raspistill', '--help'], capture_output=True, text=True, timeout=10)
+            help_text = result.stdout + result.stderr
+            
+            # サポートされているオプションをチェック
+            self.supports_immediate = '--immediate' in help_text
+            self.supports_quality = '-q' in help_text
+            self.supports_resolution = '-w' in help_text and '-h' in help_text
+            
+            print("📷 カメラツール互換性チェック:")
+            print(f"   --immediate: {'✅' if self.supports_immediate else '❌'}")
+            print(f"   -q (品質): {'✅' if self.supports_quality else '❌'}")
+            print(f"   -w/-h (解像度): {'✅' if self.supports_resolution else '❌'}")
+            
+        except Exception as e:
+            print(f"⚠️  互換性チェックエラー: {e}")
+            # デフォルトで安全な設定を使用
+            self.supports_immediate = False
+            self.supports_quality = True
+            self.supports_resolution = True
 
     def cleanup_camera_processes(self):
         """カメラプロセスのクリーンアップ"""
@@ -287,16 +314,19 @@ class CameraApp:
             self.stop_preview()
             time.sleep(0.5)
             
-            # 写真撮影
-            cmd = [
-                'raspistill',
-                '-o', filepath,
-                '-t', '100',  # 100ms
-                '--immediate',
-                '-q', '90',
-                '-w', '1920',
-                '-h', '1080'
-            ]
+            # 写真撮影（互換性に基づいてパラメータを選択）
+            cmd = ['raspistill', '-o', filepath]
+            
+            # タイマー設定（古いバージョンでも動作）
+            cmd.extend(['-t', '1000'])
+            
+            # 品質設定（サポートされている場合のみ）
+            if hasattr(self, 'supports_quality') and self.supports_quality:
+                cmd.extend(['-q', '90'])
+            
+            # 解像度設定（サポートされている場合のみ）
+            if hasattr(self, 'supports_resolution') and self.supports_resolution:
+                cmd.extend(['-w', '1920', '-h', '1080'])
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             
