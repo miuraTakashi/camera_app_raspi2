@@ -5,8 +5,12 @@
 echo "🔧 写真が/root/publicに行く問題を修正中..."
 echo "=========================================="
 
-# 現在のユーザー名を取得
-CURRENT_USER=$(whoami)
+# 現在のユーザー名を取得（sudo実行時は元のユーザーを取得）
+if [ "$SUDO_USER" ]; then
+    CURRENT_USER="$SUDO_USER"
+else
+    CURRENT_USER=$(whoami)
+fi
 echo "👤 現在のユーザー: $CURRENT_USER"
 
 # 正しい共有フォルダのパス
@@ -14,6 +18,22 @@ CORRECT_SHARE_PATH="/home/$CURRENT_USER/public"
 
 # 間違ったパス
 WRONG_SHARE_PATH="/root/public"
+
+# パスの検証
+if [ "$CURRENT_USER" = "root" ] || [ "$CURRENT_USER" = "" ]; then
+    echo "❌ ユーザー名が正しく取得できませんでした"
+    echo "   手動でユーザー名を指定してください"
+    echo "   例: miura, pi など"
+    read -p "ユーザー名を入力してください: " MANUAL_USER
+    if [ -n "$MANUAL_USER" ]; then
+        CURRENT_USER="$MANUAL_USER"
+        CORRECT_SHARE_PATH="/home/$CURRENT_USER/public"
+        echo "✅ ユーザー名を手動設定: $CURRENT_USER"
+    else
+        echo "❌ ユーザー名が指定されませんでした"
+        exit 1
+    fi
+fi
 
 echo "📁 正しい共有フォルダ: $CORRECT_SHARE_PATH"
 echo "❌ 間違ったパス: $WRONG_SHARE_PATH"
