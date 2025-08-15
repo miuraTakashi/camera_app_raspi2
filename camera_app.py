@@ -149,8 +149,21 @@ class CameraApp:
             # 権限を設定（誰でも読み書き可能）
             os.chmod(dest_path, 0o777)
             
+            # ファイルの所有者を現在のユーザーに設定
+            try:
+                import pwd
+                uid = pwd.getpwnam(CURRENT_USER).pw_uid
+                gid = pwd.getpwnam(CURRENT_USER).pw_gid
+                os.chown(dest_path, uid, gid)
+            except Exception as chown_error:
+                print(f"⚠️  ファイル所有者設定エラー: {chown_error}")
+            
+            # ファイルの属性を確認
+            stat_info = os.stat(dest_path)
             print(f"✅ {file_type}をSAMBA共有フォルダに保存: {file_name}")
             print(f"   保存先: {dest_path}")
+            print(f"   ファイル権限: {oct(stat_info.st_mode)[-3:]}")
+            print(f"   ファイル所有者: {CURRENT_USER}")
             print(f"   ネットワークパス: \\\\{self.get_ip_address()}\\{SHARE_NAME}\\{os.path.basename(dest_dir)}\\{file_name}")
             
             return True

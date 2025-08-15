@@ -50,6 +50,13 @@ cat << EOF | sudo tee -a /etc/samba/smb.conf
    directory mask = 0777
    force user = $CURRENT_USER
    force group = $CURRENT_USER
+   hide files = /.*/lost+found/
+   veto files = /.*/lost+found/
+   delete veto files = yes
+   map archive = no
+   map hidden = no
+   map system = no
+   map readonly = no
 EOF
 
 # SAMBAサービスを再起動
