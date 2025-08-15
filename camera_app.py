@@ -162,9 +162,10 @@ class CameraApp:
             # ファイルの所有者をゲストユーザー（nobody）に設定（誰でも見えるように）
             try:
                 import pwd
+                import grp
                 # nobodyユーザーとnogroupグループを取得
                 nobody_uid = pwd.getpwnam('nobody').pw_uid
-                nogroup_gid = pwd.getgrnam('nogroup').gr_gid
+                nogroup_gid = grp.getgrnam('nogroup').gr_gid
                 os.chown(dest_path, nobody_uid, nogroup_gid)
                 print(f"   🔓 ファイル所有者: nobody:nogroup（誰でもアクセス可能）")
             except Exception as chown_error:
