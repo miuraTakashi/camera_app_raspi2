@@ -80,16 +80,51 @@ class CameraApp:
                 else:
                     if os.path.exists(CREDENTIALS_FILE):
                         flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                        creds = flow.run_local_server(port=0)
+                        
+                        # CUI環境での認証フロー
+                        print("🔐 Google Drive認証を開始します...")
+                        
+                        try:
+                            # まずブラウザでの認証を試行
+                            print("🌐 ブラウザでの認証を試行中...")
+                            creds = flow.run_local_server(port=0)
+                            print("✅ ブラウザ認証が完了しました")
+                        except Exception as browser_error:
+                            print("⚠️  ブラウザ認証が失敗しました。CUI認証を試行します...")
+                            try:
+                                # CUI環境での認証フロー
+                                print("💻 CUI認証を開始します...")
+                                creds = flow.run_console()
+                                print("✅ CUI認証が完了しました")
+                            except Exception as console_error:
+                                print("❌ CUI認証も失敗しました")
+                                print("   手動で認証URLにアクセスしてください")
+                                
+                                # 手動認証用のURLを表示
+                                auth_url, _ = flow.authorization_url()
+                                print(f"\n🔗 認証URL: {auth_url}")
+                                print("   このURLをブラウザが利用できる端末で開いてください")
+                                print("   認証コードを入力してください:")
+                                
+                                auth_code = input("認証コード: ").strip()
+                                if auth_code:
+                                    print("🔄 認証コードを処理中...")
+                                    flow.fetch_token(code=auth_code)
+                                    creds = flow.credentials
+                                    print("✅ 手動認証が完了しました")
+                                else:
+                                    print("❌ 認証コードが入力されませんでした")
+                                    return
                     else:
                         print("⚠️  Google Drive認証ファイルが見つかりません")
-                        print("    credentials.jsonファイルをプロジェクトディレクトリに配置してください")
+                        print("   credentials.jsonファイルをプロジェクトディレクトリに配置してください")
                         print("    Google Cloud ConsoleでOAuth 2.0クライアントIDを作成してください")
                         return
                 
                 # トークンを保存
                 with open(TOKEN_FILE, 'wb') as token:
                     pickle.dump(creds, token)
+                print("💾 認証トークンを保存しました")
             
             # Drive APIサービスを構築
             self.drive_service = build('drive', 'v3', credentials=creds)
@@ -98,6 +133,7 @@ class CameraApp:
         except Exception as e:
             print(f"❌ Google Drive設定エラー: {e}")
             print("   インターネット接続と認証ファイルを確認してください")
+            print("   CUI環境の場合は、別の端末で認証URLにアクセスしてください")
     
     def upload_to_drive(self, file_path, file_type):
         """Google Driveにファイルをアップロード"""
