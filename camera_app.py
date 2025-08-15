@@ -20,12 +20,14 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import pickle
+import json
 
 # Google Drive API設定
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.pickle'
-FOLDER_ID = '1ffVLu6KyQTnz_9ppsqVIGkCXXLdT90U7'  # 指定された共有フォルダID
+CONFIG_FILE = 'camera_config.json'
+DEFAULT_FOLDER_ID = '1ffVLu6KyQTnz_9ppsqVIGkCXXLdT90U7'  # デフォルトのフォルダID
 
 class CameraApp:
     def __init__(self):
@@ -50,6 +52,7 @@ class CameraApp:
         
         # Google Drive設定
         self.drive_service = None
+        self.folder_id = self.load_config()
         self.setup_google_drive()
         
         # 設定
@@ -63,6 +66,31 @@ class CameraApp:
         # 起動時のプロセスクリーンアップ
         self.cleanup_camera_processes()
         
+    def load_config(self):
+        """設定ファイルを読み込み"""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+                    folder_id = config.get('folder_id', DEFAULT_FOLDER_ID)
+                    print(f"📁 設定ファイルからフォルダIDを読み込み: {folder_id}")
+                    return folder_id
+            else:
+                # デフォルト設定ファイルを作成
+                config = {
+                    'folder_id': DEFAULT_FOLDER_ID,
+                    'description': 'Google DriveフォルダIDを変更する場合は、このファイルを編集してください'
+                }
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                print(f"📁 デフォルト設定ファイルを作成: {CONFIG_FILE}")
+                print(f"   フォルダID: {DEFAULT_FOLDER_ID}")
+                return DEFAULT_FOLDER_ID
+        except Exception as e:
+            print(f"⚠️  設定ファイル読み込みエラー: {e}")
+            print(f"   デフォルトフォルダIDを使用: {DEFAULT_FOLDER_ID}")
+            return DEFAULT_FOLDER_ID
+
     def setup_google_drive(self):
         """Google Drive APIの設定"""
         try:
@@ -165,7 +193,7 @@ class CameraApp:
             # ファイルのメタデータ
             file_metadata = {
                 'name': file_name,
-                'parents': [FOLDER_ID]
+                'parents': [DEFAULT_FOLDER_ID]
             }
             
             # メディアファイルの準備
